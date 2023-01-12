@@ -1,36 +1,58 @@
-#include "MotorController.h"
+#include "DriveController.h"
 #include "QTRSensorController.h"
-#include "Global.h"
 
-const motor leftMotor {LEFT_MOTOR_PLUS_PIN, LEFT_MOTOR_MINUS_PIN};
-const motor rightMotor {RIGHT_MOTOR_PLUS_PIN, RIGHT_MOTOR_MINUS_PIN};
 
-//This will run only one time.
-void setup(){
-  Serial.begin(9600);
+/*
+ * useful for testing direction and which motor is which
+ * expected behaviour
+ * wait 2 sec
+ * turn left motor forward for 1 sec
+ * wait 1 sec
+ * turn left motor backward for 1 sec
+ * wait 1 sec
+ * do the same with right motor
+ */
 
-//  initMotor(leftMotor);
-//  initMotor(rightMotor);
-//  
-//  runMotor(leftMotor, true, 200);
-//  runMotor(rightMotor, true, 200);
-//  
-//  delay(3000);
-//  
-//  stopMotor(rightMotor);
-//  
-//  delay(1000);
-//  
-//  runMotor(rightMotor, false, 255);
-//  
-//  stopMotor(leftMotor);
-//  stopMotor(rightMotor);
-
-  qtrInit();
-  qtrCalibrate();
+void motorTest1() {
+  delay(2000);
+  motorRun(leftMotor, MAX_MOTOR_SPEED);
+  delay(1000);
+  motorStop(leftMotor);
+  delay(1000);
+  motorRun(leftMotor, -MAX_MOTOR_SPEED);
+  delay(1000);
+  motorStop(leftMotor);
+  delay(1000);
+  motorRun(rightMotor, MAX_MOTOR_SPEED);
+  delay(1000);
+  motorStop(rightMotor);
+  delay(1000);
+  motorRun(rightMotor, -MAX_MOTOR_SPEED);
+  delay(1000);
+  motorStop(rightMotor);
 }
 
+void motorTest2() {
+  delay(5000);
+  motorRun(leftMotor, MAX_MOTOR_SPEED);
+  motorRun(rightMotor, MAX_MOTOR_SPEED);
+  delay(2500);
+  motorStop(leftMotor);
+  motorStop(rightMotor);
+}
+
+void setup(){
+  Serial.begin(9600);
+  driveInit();
+  qtrInit();
+//  motorTest1();
+  qtrCalibrate();
+
+//  motorTest2();
+}
 
 void loop(){
-   qtrGetBlackLinePosition(true);
+  driveStateUpdate();
+  driveController();
+//  simulateDriveForward();
 }

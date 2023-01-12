@@ -2,32 +2,36 @@
 #define MOTOR_CONTROLLER_H
 
 struct motor {
-  uint8_t plusPin;
-  uint8_t minusPin;
+  uint8_t inputPin1,
+          inputPin2,
+          enablePin;
 };
 
-void initMotor(const motor &m) {
-  pinMode(m.plusPin, OUTPUT);
-  pinMode(m.minusPin, OUTPUT);
+void motorInit(const motor &m) {
+  pinMode(m.inputPin1, OUTPUT);
+  pinMode(m.inputPin2, OUTPUT);
+  pinMode(m.enablePin, OUTPUT);
 }
 
 // make motor turn at a certain speed
 // TODO determine thresholds
-void runMotor(const motor &m, int16_t power) {
+void motorRun(const motor &m, int16_t power) {
   if (power >= 0) {
     // positive power => forward movement
-    analogWrite(m.plusPin, power);
-    digitalWrite(m.minusPin, LOW);
+    digitalWrite(m.inputPin1, HIGH);
+    digitalWrite(m.inputPin2, LOW);
   } else {
-    // negative power => forward movement
-    analogWrite(m.plusPin, LOW);
-    digitalWrite(m.minusPin, -power);
+    // negative power => backward movement
+    digitalWrite(m.inputPin1, LOW);
+    digitalWrite(m.inputPin2, HIGH);
   }
+  analogWrite(m.enablePin, abs(power));
 }
 
-void stopMotor(const motor &m) {
-  digitalWrite(m.plusPin, LOW);
-  digitalWrite(m.minusPin, LOW);
+void motorStop(const motor &m) {
+  digitalWrite(m.inputPin1, LOW);
+  digitalWrite(m.inputPin2, LOW);
+  analogWrite(m.enablePin, 0);
 }
 
 #endif
