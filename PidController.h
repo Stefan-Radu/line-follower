@@ -5,7 +5,7 @@
 
 int16_t pidCenterLine(double e, bool debug = false) {
   static const int16_t maxCorrection = MAX_MOTOR_SPEED * 2;
-  static const double kp = 400, kd = 650, ki = 0.1;
+  static const double kp = 650, kd = 2000, ki = 0.15;
   
   static double lastError = 0, cummulativeError = 0;
 

@@ -7,6 +7,9 @@ struct motor {
           enablePin;
 };
 
+motor leftMotor {LEFT_INPUT_PIN_2, LEFT_INPUT_PIN_1, LEFT_ENABLE_PIN};
+motor rightMotor {RIGHT_INPUT_PIN_2, RIGHT_INPUT_PIN_1, RIGHT_ENABLE_PIN};
+
 void motorInit(const motor &m) {
   pinMode(m.inputPin1, OUTPUT);
   pinMode(m.inputPin2, OUTPUT);

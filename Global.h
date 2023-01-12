@@ -26,8 +26,16 @@ double doubleMap(double x, double in_min, double in_max, double out_min, double 
 #define SENSOR_MAX_VALUE 5000.0
 #define SENSOR_MIN_VALUE 0.0
 
-#define MAX_MOTOR_SPEED 200
+#define CALIBRATION_OUTER_THRESHOLD 0.95
+#define CALIBRATION_INNER_THRESHOLD 0.1
+
+#define MAX_MOTOR_SPEED 255
 
 #define TIME_ONE_WHITE_TO_STOP 1000 // millis
+
+#define EEPROM_CALIBRATION_DATA_ADDRESS 0
+
+#define BUTTON_PIN 3
+#define BUTTON_DEBOUNCE_DURATION 50
 
 #endif

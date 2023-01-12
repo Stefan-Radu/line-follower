@@ -1,6 +1,7 @@
 #ifndef DRIVE_CONTROLLER_H
 #define DRIVE_CONTROLLER_H
 
+#include "ButtonController.h"
 #include "MotorController.h"
 #include "Global.h"
 #include "QTRSensorController.h"
@@ -13,14 +14,15 @@ enum DriveState {
   U_TURN,
 };
 
-const motor leftMotor {LEFT_INPUT_PIN_2, LEFT_INPUT_PIN_1, LEFT_ENABLE_PIN};
-const motor rightMotor {RIGHT_INPUT_PIN_2, RIGHT_INPUT_PIN_1, RIGHT_ENABLE_PIN};
-
 DriveState state = STOP;
 
 void driveInit() {
   motorInit(leftMotor);
   motorInit(rightMotor);
+  
+  // used to recalibrate the sensor
+  buttonInit(button, BUTTON_PIN);
+  
   Serial.println("Driver Initialized");
 }
 
@@ -31,17 +33,26 @@ void driveStateUpdate() {
   int8_t cnt = qtrGetBlackSensorCount();
   if (cnt == 0) {
     if (lastTimeOnBlack - timeNow > TIME_ONE_WHITE_TO_STOP) {
-      state = DriveState::STOP;
+      state = STOP;
     }
   } else {
     lastTimeOnBlack = millis();
-    state = DriveState::FORWARD;
+    state = FORWARD;
   }
 }
 
 void driveStop() {
   motorStop(leftMotor);
   motorStop(rightMotor);
+}
+
+void driveQTRCalibrateOnButtonPress() {
+  bool p = buttonDetectPress(button);
+  if (p == 1) {
+    driveStop();
+    state = STOP;
+    qtrCalibrate();
+  }
 }
 
 void driveForward() {
@@ -80,15 +91,15 @@ void simulateDriveForward() {
 
 void driveController() {
   switch (state) {
-    case DriveState::STOP:
+    case STOP:
       driveStop();
       break;
-    case DriveState::FORWARD:
+    case FORWARD:
       driveForward();
       break;
-    case DriveState::SIDE_TURN:
+    case SIDE_TURN:
       break;
-    case DriveState::U_TURN:
+    case U_TURN:
       break;
   }
 }
