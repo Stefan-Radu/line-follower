@@ -6,10 +6,16 @@
 #include "MotorController.h"
 #include "Global.h"
 
+
+#define BLACK_THRESHOLD 400
+#define EXP_SMOOTH_ALPHA 0.75f // 0.05 at power 10
+
+
 QTRSensors qtr;
 
 const uint8_t sensorCount = 6;
 uint16_t sensorValues[sensorCount];
+uint16_t sensorValuesSmooth[sensorCount];
 
 void qtrInit() {
   // configure the sensors
@@ -57,15 +63,26 @@ void loadCalibrationData() {
   Serial.println("Calibration Data loaded");
 }
 
+void qtrReadCalibratedSmooth() {
+  /* 
+   * do exponential smoothing to reduce errors
+   * that means that the smooth calibrated value sv:
+   * sv_n = sv_n * (1 - alpha) + alpha * reading_now 
+   */
+  qtr.readCalibrated(sensorValue);
+  for (int i = 0; i < sensorCount; ++i) {
+    sensorValuesSmooth[i] = 1.0f * sensorValuesSmooth[i] * (1 - EXP_SMOOTH_ALPHA) +
+                            EXP_SMOOTH_ALPHA * sensorValue[i];
+  }
+}
+
 /*
  * count how many of the sensors 
  * detect a dark color
  * this is used to determine the driving state
  */
 int8_t qtrGetBlackSensorCount() {
-  static const uint16_t blackThreshold = 400;
-
-  qtr.readCalibrated(sensorValues); 
+  qtrReadCalibratedSmooth(); 
   
 //  for (uint8_t i = 0; i < sensorCount; ++i) {
 //    Serial.print(sensorValues[i]);
@@ -75,7 +92,7 @@ int8_t qtrGetBlackSensorCount() {
 
   int8_t count = 0;
   for (int8_t i = 0; i < sensorCount; ++i) {
-    if (sensorValues[i] > blackThreshold) {
+    if (sensorValuesSmooth[i] > BLACK_THRESHOLD) {
       count += 1;
     }
   }
@@ -99,6 +116,7 @@ double qtrGetBlackLinePosition(bool debug = false) {
   double linePos = doubleMap(res, SENSOR_MIN_VALUE, SENSOR_MAX_VALUE, LINE_POS_FAR_LEFT, LINE_POS_FAR_RIGHT);
 
   if (debug) {
+    // TODO remove this when done with it
     for (uint8_t i = 0; i < sensorCount; ++i) {
       Serial.print(sensorValues[i]);
       Serial.print('\t');
@@ -130,6 +148,7 @@ void qtrCalibrate() {
     qtr.calibrate();
     double linePos = qtrGetBlackLinePosition();
     /*
+     * TODO write oscialate() function
      * oscilate between the left part of the line
      * and the right side of the line
      */

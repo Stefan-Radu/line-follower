@@ -10,8 +10,6 @@
 enum DriveState {
   STOP,
   FORWARD,
-  SIDE_TURN,
-  U_TURN,
 };
 
 DriveState state = STOP;
@@ -72,6 +70,10 @@ void driveForward() {
 }
 
 void simulateDriveForward() {
+  /*
+   * this is for testing only!! 
+   * TODO remove when done
+   */
   double error = qtrGetBlackLinePosition();
   Serial.print("Error ");
   Serial.println(error);
@@ -96,10 +98,6 @@ void driveController() {
       break;
     case FORWARD:
       driveForward();
-      break;
-    case SIDE_TURN:
-      break;
-    case U_TURN:
       break;
   }
 }

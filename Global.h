@@ -13,6 +13,9 @@ double doubleMap(double x, double in_min, double in_max, double out_min, double 
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
+// TODO make this <utils.h>
+// TODO move defines in corresponding folders
+
 #define RIGHT_INPUT_PIN_1 7
 #define RIGHT_INPUT_PIN_2 6
 #define RIGHT_ENABLE_PIN 11
