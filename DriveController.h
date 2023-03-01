@@ -10,9 +10,19 @@
 enum DriveState {
   STOP,
   FORWARD,
+  TURN_LEFT,
+  TURN_RIGHT,
+  TURN_AROUND,
 };
 
+enum DriveMode {
+  FOLLOW_LINE,
+  SOLVE_MAZE,
+};
+
+DriveMode driveMode = SOLVE_MAZE;
 DriveState state = STOP;
+Button button;
 
 void driveInit() {
   motorInit(leftMotor);
@@ -28,7 +38,7 @@ void driveStateUpdate() {
   static int32_t lastTimeOnBlack = 0;
 
   int32_t timeNow = millis();
-  int8_t cnt = qtrGetBlackSensorCount();
+//  int8_t cnt = qtrGetBlackSensorCount();
   if (cnt == 0) {
     if (lastTimeOnBlack - timeNow > TIME_ONE_WHITE_TO_STOP) {
       state = STOP;
@@ -45,6 +55,7 @@ void driveStop() {
 }
 
 void driveQTRCalibrateOnButtonPress() {
+  static Button b;
   bool p = buttonDetectPress(button);
   if (p == 1) {
     driveStop();
