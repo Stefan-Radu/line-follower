@@ -8,20 +8,90 @@
 
 
 #define BLACK_THRESHOLD 400
-#define EXP_SMOOTH_ALPHA 0.75f // 0.05 at power 10
-
+#define READINGS_CNT_TO_UPDATE_PATH 7
+#define SMOOTH_READINGS_CNT_TO_UPDATE 5
+#define EXP_SMOOTH_ALPHA 0.6f // 0.05 at power 10
 
 QTRSensors qtr;
 
 const uint8_t sensorCount = 6;
 uint16_t sensorValues[sensorCount];
-uint16_t sensorValuesSmooth[sensorCount];
+
+// for 3 readings
+//enum PathType: uint8_t {
+//  EMPTY,
+//  LINE,
+//  LEFT_TURN,
+//  RIGHT_TURN,
+//  CROSS_INTERSECTION,
+//  T_INTERSECTION,
+//  LEFT_T_INTERSECTION,
+//  RIGHT_T_INTERSECTION,
+//  DEAD_END,
+//  DESTINATION
+//};
+
+// for 2 readings
+enum PathType: uint8_t {
+  EMPTY,
+  LINE,
+  LEFT_TURN,
+  RIGHT_TURN,
+  T_INTERSECTION,
+  U_TURN,
+  DESTINATION
+};
+
+enum ReadingType: uint8_t {
+  NOTHING,
+  VERTICAL,
+  FULL_HORIZONTAL,
+  LEFT_HORIZONTAL,
+  RIGHT_HORIZONTAL
+};
+
+struct qtrPath {
+  uint8_t left: 1,
+          front: 1,
+          right: 1;
+
+  bool operator==(const qtrPath &other) const {
+    return this->left == other.left && 
+           this->front == other.front &&
+           this->right == other.right;
+  }
+
+  bool operator!=(const qtrPath &other) const {
+    return !(*this == other);
+  }
+};
+
+struct qtrSmoothSensorInfo {
+  uint8_t readings;
+  uint16_t values[sensorCount];
+  PathType currentPathType;
+  ReadingType pastReadings[2];
+//  ReadingType pastReadings[3];
+} smoothSensorInfo;
+
+struct qtrBlackSensorCount {
+  uint8_t leftSide: 2,
+          rightSide: 2,
+          total: 4;
+};
 
 void qtrInit() {
   // configure the sensors
   qtr.setTypeAnalog();
   qtr.setSensorPins((const uint8_t[]){A0, A1, A2, A3, A4, A5}, sensorCount);
 
+  smoothSensorInfo = {
+    .readings = 0,
+    .values = {0, 0, 0, 0, 0, 0},
+    .currentPathType = EMPTY,
+    .pastReadings = {NOTHING, NOTHING}
+  };
+  
   delay(500);
   Serial.println("QTR Initialized");
 }
@@ -63,44 +133,6 @@ void loadCalibrationData() {
   Serial.println("Calibration Data loaded");
 }
 
-void qtrReadCalibratedSmooth() {
-  /* 
-   * do exponential smoothing to reduce errors
-   * that means that the smooth calibrated value sv:
-   * sv_n = sv_n * (1 - alpha) + alpha * reading_now 
-   */
-  qtr.readCalibrated(sensorValue);
-  for (int i = 0; i < sensorCount; ++i) {
-    sensorValuesSmooth[i] = 1.0f * sensorValuesSmooth[i] * (1 - EXP_SMOOTH_ALPHA) +
-                            EXP_SMOOTH_ALPHA * sensorValue[i];
-  }
-}
-
-/*
- * count how many of the sensors 
- * detect a dark color
- * this is used to determine the driving state
- */
-int8_t qtrGetBlackSensorCount() {
-  qtrReadCalibratedSmooth(); 
-  
-//  for (uint8_t i = 0; i < sensorCount; ++i) {
-//    Serial.print(sensorValues[i]);
-//    Serial.print('\t');
-//  }
-//  delay(500);
-
-  int8_t count = 0;
-  for (int8_t i = 0; i < sensorCount; ++i) {
-    if (sensorValuesSmooth[i] > BLACK_THRESHOLD) {
-      count += 1;
-    }
-  }
-
-  return count;
-}
-
-// TODO update this to be able to return linepos, turns, intersections
 /*
  * return black line position as a number between -1 and 1
  * where -1 is far left
@@ -161,6 +193,7 @@ void qtrCalibrate() {
   }
 
   /*
+   * TODO fix this as it's brokend and throws the robot sideways
    * do this to somewhat center the robot on
    * the line after callibration
    */
@@ -182,6 +215,189 @@ void qtrCalibrate() {
   Serial.println("QTR Sensor calibrated");
 
   saveCalibrationData();
+}
+
+qtrIsBlack(uint16_t reading) {
+  return reading > BLACK_THRESHOLD;
+}
+
+uint8_t qtrCountBlackSensors() {
+  uint8_t ret = 0;
+  for (int i = 0; i < sensorCount; ++i) {
+    if (qtrIsBlack(sensorValues[i])) {
+      ret += 1;
+    }
+  }
+  return ret;
+}
+
+// TODO black count back to being just count
+qtrBlackSensorCount qtrSmoothSensorBlackCount() {
+  qtrBlackSensorCount ret = {0, 0, 0};
+  for (int i = 0; i < sensorCount / 2; ++i) {
+    ret.leftSide += qtrIsBlack(smoothSensorInfo.values[i]);
+  }
+  for (int i = sensorCount / 2; i < sensorCount; ++i) {
+    ret.rightSide += qtrIsBlack(smoothSensorInfo.values[i]);
+  }
+  ret.total = ret.leftSide + ret.rightSide;
+  return ret;
+}
+
+void qtrSmoothReadCalibrated() {
+  /* 
+   * do exponential smoothing to reduce errors
+   * that means that the smooth calibrated value sv:
+   * sv_n = sv_n * (1 - alpha) + alpha * reading_now 
+   */
+  qtr.readCalibrated(sensorValues);
+  for (int i = 0; i < sensorCount; ++i) {
+    smoothSensorInfo.values[i] = 1.0f * smoothSensorInfo.values[i] * (1 - EXP_SMOOTH_ALPHA) +
+                                 EXP_SMOOTH_ALPHA * sensorValues[i];
+  }
+  smoothSensorInfo.readings += 1;
+}
+
+bool qtrSmoothUpdateReadings() {
+  // return true if updated
+  qtrSmoothReadCalibrated();
+
+  if (smoothSensorInfo.readings == SMOOTH_READINGS_CNT_TO_UPDATE) {
+    smoothSensorInfo.readings = 0;
+   
+    // shift down past readings to make room for new reading
+//    smoothSensorInfo.pastReadings[2] = smoothSensorInfo.pastReadings[1];
+    smoothSensorInfo.pastReadings[1] = smoothSensorInfo.pastReadings[0];
+    
+    qtrBlackSensorCount cnt = qtrSmoothSensorBlackCount();
+    if (cnt.total < 2) {
+      smoothSensorInfo.pastReadings[0] = NOTHING; 
+    } else if (cnt.total <= 4) {
+      smoothSensorInfo.pastReadings[0] = VERTICAL;
+    } else if (cnt.total <= 5 && cnt.leftSide == 3) {
+      smoothSensorInfo.pastReadings[0] = LEFT_HORIZONTAL;
+    } else if (cnt.total <= 5 && cnt.rightSide == 3) {
+      smoothSensorInfo.pastReadings[0] = RIGHT_HORIZONTAL;
+    } else if (cnt.total == 6) {
+      smoothSensorInfo.pastReadings[0] = FULL_HORIZONTAL;
+    } else {
+      smoothSensorInfo.pastReadings[0] = VERTICAL;
+    }
+    
+    return 1;
+  }
+
+  return 0;
+}
+
+bool qtrUpdatedReadings() {
+  return smoothSensorInfo.readings = 0;
+}
+
+void qtrSmoothUpdatePath() {
+  bool updated = qtrSmoothUpdateReadings();
+  if (!updated) {
+    return;
+  }
+
+  if (smoothSensorInfo.pastReadings[0] == VERTICAL) {
+    smoothSensorInfo.currentPathType = LINE;
+  } else if (smoothSensorInfo.pastReadings[0] == LEFT_HORIZONTAL) {
+    smoothSensorInfo.currentPathType = LEFT_TURN;
+  } else if (smoothSensorInfo.pastReadings[0] == RIGHT_HORIZONTAL) {
+    smoothSensorInfo.currentPathType = RIGHT_TURN;
+  } else if (smoothSensorInfo.pastReadings[0] == FULL_HORIZONTAL) {
+    smoothSensorInfo.currentPathType = T_INTERSECTION;
+  } else if (smoothSensorInfo.pastReadings[0] == NOTHING) {
+    if (smoothSensorInfo.pastReadings[1] == VERTICAL) {
+      smoothSensorInfo.currentPathType = U_TURN;
+    } else {
+      smoothSensorInfo.currentPathType = EMPTY;
+    }
+  } else {
+    smoothSensorInfo.currentPathType = LINE;
+  }
+}
+
+qtrSmoothPrintPath() {
+  String s = "";
+  switch (smoothSensorInfo.currentPathType) {
+    case EMPTY:
+      s = "EMPTY";
+      break;
+    case LINE:
+      s = "LINE";
+      break;
+    case LEFT_TURN:
+      s = "LEFT_TURN";
+      break;
+    case RIGHT_TURN:
+      s = "RIGHT_TURN";
+      break;
+    case U_TURN:
+      s = "U_TURN";
+      break;
+    case T_INTERSECTION:
+      s = "T_INTERSECTION";
+      break;
+  }
+
+  Serial.println(s);
+}
+
+qtrPath qtrInterpretValues(int16_t* sensorValues) {
+  /*
+   * Get sensor values and output qtrPath struct reflecting 
+   * an interpretation of the previous reading:
+   *  - line in the center
+   *  - line to the left (left turn)
+   *  - line to the right (right turn)
+   *  - horizontal line (t-intersection)
+   */
+  bool isBlackFarLeft = qtrIsBlack(sensorValues[0]);
+  bool isBlackFarRight = qtrIsBlack(sensorValues[sensorCount - 1]);
+
+  qtrPath res = {0, 0, 0};
+  if (!isBlackFarLeft && !isBlackFarRight) {
+    if (qtrCountBlackSensors() >= 2) {
+      res.front = 1;
+    }
+  } else {
+    if (isBlackFarLeft) {
+      res.left = 1;
+    }
+    if (isBlackFarRight) {
+      res.right = 1;
+    }
+  }
+
+  return res;
+}
+
+#define DEBOUNCE_DURATION 50
+
+qtrPath qtrGetPath() {
+  static int16_t consistentReadingsCnt = 0;
+  static qtrPath previousPath = {0, 0, 0}, result;
+  static int32_t lastDebounceTime = 0;
+  
+  qtr.readCalibrated(sensorValues);
+  qtrPath currentPath = qtrInterpretValues(sensorValues);
+
+//  Serial.print(currentPath.left);
+//  Serial.print(currentPath.front);
+//  Serial.print(currentPath.right);
+
+  if (currentPath != previousPath) {
+    lastDebounceTime = millis();
+  }
+
+  if (millis() - lastDebounceTime > DEBOUNCE_DURATION) {
+    result = currentPath;
+  }
+
+  previousPath = currentPath;
+  return result;
 }
 
 #endif

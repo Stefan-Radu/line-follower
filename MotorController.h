@@ -1,6 +1,8 @@
 #ifndef MOTOR_CONTROLLER_H
 #define MOTOR_CONTROLLER_H
 
+#include "Global.h"
+
 struct motor {
   uint8_t inputPin1,
           inputPin2,

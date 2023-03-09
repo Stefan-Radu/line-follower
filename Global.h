@@ -24,6 +24,8 @@ double doubleMap(double x, double in_min, double in_max, double out_min, double 
 #define LEFT_INPUT_PIN_2 4
 #define LEFT_ENABLE_PIN 10
 
+#define BUTTON_PIN 3
+
 #define LINE_POS_FAR_LEFT -1.0
 #define LINE_POS_FAR_RIGHT 1.0
 #define SENSOR_MAX_VALUE 5000.0
@@ -32,13 +34,12 @@ double doubleMap(double x, double in_min, double in_max, double out_min, double 
 #define CALIBRATION_OUTER_THRESHOLD 0.95
 #define CALIBRATION_INNER_THRESHOLD 0.1
 
-#define MAX_MOTOR_SPEED 255
+//#define MAX_MOTOR_SPEED 255
+// TODO separate speeds for maze and line follow
+#define MAX_MOTOR_SPEED 230
 
-#define TIME_ONE_WHITE_TO_STOP 1000 // millis
+#define TIME_ONE_WHITE_TO_STOP 1000 // millis //TODO typo
 
 #define EEPROM_CALIBRATION_DATA_ADDRESS 0
-
-#define BUTTON_PIN 3
-#define BUTTON_DEBOUNCE_DURATION 50
 
 #endif
