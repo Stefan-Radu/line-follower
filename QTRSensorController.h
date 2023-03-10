@@ -7,8 +7,8 @@
 #include "Global.h"
 
 
-#define BLACK_THRESHOLD 400
-#define READINGS_CNT_TO_UPDATE_PATH 7
+#define BLACK_THRESHOLD 600
+//#define READINGS_CNT_TO_UPDATE_PATH 2
 #define SMOOTH_READINGS_CNT_TO_UPDATE 5
 #define EXP_SMOOTH_ALPHA 0.6f // 0.05 at power 10
 
@@ -374,29 +374,35 @@ qtrPath qtrInterpretValues(int16_t* sensorValues) {
   return res;
 }
 
-#define DEBOUNCE_DURATION 50
+#define DEBOUNCE_CNT_TARGET 3
 
 qtrPath qtrGetPath() {
   static int16_t consistentReadingsCnt = 0;
-  static qtrPath previousPath = {0, 0, 0}, result;
-  static int32_t lastDebounceTime = 0;
+  static qtrPath previousPath = {0, 1, 0}, result = {0, 1, 0};
+  static int32_t debounceCnt = 0;
   
   qtr.readCalibrated(sensorValues);
   qtrPath currentPath = qtrInterpretValues(sensorValues);
 
+//  if (currentPath == qtrPath{0, 0, 0}) {
+//    Serial.println("nimiiic");
+//    delay(1000);
+//  }
 //  Serial.print(currentPath.left);
 //  Serial.print(currentPath.front);
-//  Serial.print(currentPath.right);
+//  Serial.println(currentPath.right);
 
   if (currentPath != previousPath) {
-    lastDebounceTime = millis();
+    debounceCnt = 1;
+  } else {
+    debounceCnt += 1;
   }
 
-  if (millis() - lastDebounceTime > DEBOUNCE_DURATION) {
+  if (debounceCnt >= DEBOUNCE_CNT_TARGET) {
     result = currentPath;
   }
-
   previousPath = currentPath;
+  
   return result;
 }
 

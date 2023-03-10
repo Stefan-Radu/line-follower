@@ -33,7 +33,10 @@ Button button;
 bool isTurning = false;
 bool actionLock = false;
 
-#define FORWARD_ACTION_DURATION 180
+#define TURN_OVERSHOOT_DURATION 150
+#define U_TURN_OVERSHOOT_DURATION 250
+#define BACK_ON_TRACK_DURATION 760
+#define SKIP_INTERSECTION_DURATION 150
 
 void driveInit() {
   motorInit(leftMotor);
@@ -103,46 +106,74 @@ void driveStateUpdate(bool debug = false) {
   }
 }
 
-DriveAction driveGetNextAction() {
-  static DriveAction previousAction = DriveAction::STOP;
-  static qtrPath previousPath = {0, 0, 0};
+bool driveIsTurn(const DriveAction &a) {
+  return a == DriveAction::TURN_LEFT ||
+         a == DriveAction::TURN_RIGHT ||
+         a == DriveAction::TURN_AROUND;
+}
 
+DriveAction driveGetNextAction() {
+  static uint32_t timer = 0;
+  static DriveAction previousAction = DriveAction::STOP;
+  static qtrPath pathA = {0, 1, 0}, pathB = {0, 0, 0};
+
+  qtrPath newReading = qtrGetPath();
+  if (newReading != pathA) {
+    pathB = pathA;
+    pathA = newReading;
+  }
+
+//  Serial.print(pathA.left);
+//  Serial.print(" ");
+//  Serial.print(pathA.front);
+//  Serial.print(" ");
+//  Serial.print(pathA.right);
+//  Serial.print(" | ");
+//  Serial.print(pathB.left);
+//  Serial.print(" ");
+//  Serial.print(pathB.front);
+//  Serial.print(" ");
+//  Serial.println(pathB.right);
+  
   DriveAction ret;
-  qtrPath currentPath = qtrGetPath();
   if (actionLock == true) {
     ret = previousAction;
   } else {
-    if (previousPath.left) {
-      ret = DriveAction::TURN_LEFT;
-      Serial.println("turn left");
-    } else if (currentPath.front) {
-      if (previousPath.right) {
-        ret = DriveAction::FORWARD;
-      } else {
-        ret = DriveAction::FOLLOW_LINE;
+    if (driveIsTurn(previousAction)) {
+      timer = millis();
+      ret = DriveAction::FOLLOW_LINE;
+    } else if (timer != 0) {
+      ret = DriveAction::FOLLOW_LINE;
+      if (millis() - timer > BACK_ON_TRACK_DURATION) {
+        timer = 0;
       }
-      Serial.println("go straight");
-    } else if (previousPath.right) {
+    } else if (pathB.left) {
+      ret = DriveAction::TURN_LEFT;
+//      Serial.println("turn left");
+//      delay(500);
+    } else if (pathA.front) {
+//      if (previousPath.right) {
+//        ret = DriveAction::FORWARD;
+//      } else {
+        ret = DriveAction::FOLLOW_LINE;
+//      }
+//      Serial.println("go straight");
+    } else if (pathB.right) {
       ret = DriveAction::TURN_RIGHT;
-      Serial.println("turn right");
-    } else if (previousPath.front && currentPath == qtrPath{0, 0, 0}) {
+//      Serial.println("turn right");
+    } else if (/*previousPath.front &&*/ pathA == qtrPath{0, 0, 0}) {
       ret = DriveAction::TURN_AROUND;
-      Serial.println("turn around");
+       // TODO doua goale la rand == U_TURN
+//      Serial.println("turn around");
     } else {
       ret = previousAction; 
     }
   }
 
   previousAction = ret;
-  previousPath = currentPath;
+//  previousPath = currentPath;
 //  delay(100);
-
   return ret;
-}
-
-void driveSetSpeeds(int16_t left, int16_t right) {
-  motorRun(leftMotor, left);
-  motorRun(leftMotor, right);
 }
 
 void driveStop() {
@@ -153,16 +184,16 @@ void driveStop() {
 void driveMotorsTurn(const DriveAction &a) {
   switch (a) {
   case DriveAction::TURN_LEFT:
-    motorRun(rightMotor, MAX_MOTOR_SPEED);
-    motorStop(leftMotor);
+    motorRun(leftMotor, -TURN_MOTOR_SPEED); // TODO magic number
+    motorRun(rightMotor, TURN_MOTOR_SPEED);
     break;
   case DriveAction::TURN_RIGHT:
-    motorRun(leftMotor, MAX_MOTOR_SPEED);
-    motorStop(rightMotor);
+    motorRun(leftMotor, TURN_MOTOR_SPEED);
+    motorRun(rightMotor, -TURN_MOTOR_SPEED);// TODO magic number
     break;
   case DriveAction::TURN_AROUND:
-    motorRun(leftMotor, MAX_MOTOR_SPEED);
-    motorRun(rightMotor, -MAX_MOTOR_SPEED);
+    motorRun(leftMotor, TURN_MOTOR_SPEED);
+    motorRun(rightMotor, -TURN_MOTOR_SPEED);
     break;
   }
 }
@@ -175,15 +206,19 @@ void driveForw() {
     timer = millis();
   }
 
-  driveSetSpeeds(MAX_MOTOR_SPEED, MAX_MOTOR_SPEED);
+  // TODO IDEEE
+//  driveStop();
+  motorRun(leftMotor, MAX_MOTOR_SPEED);
+  motorRun(rightMotor, MAX_MOTOR_SPEED);
 
-  if (millis() - timer > FORWARD_ACTION_DURATION) {
+  if (millis() - timer > SKIP_INTERSECTION_DURATION) {
     actionLock = false;
   }
 }
 
 enum class TurnStage {
   OVERSHOOT,
+  FIND_EMPTY,
   TURN,
 };
 
@@ -196,24 +231,35 @@ void driveTurn(const DriveAction &a) {
     ts = TurnStage::OVERSHOOT;
   }
 
+  qtrPath p = qtrGetPath();
+  uint16_t timerTarget = (a == DriveAction::TURN_AROUND) ?
+    U_TURN_OVERSHOOT_DURATION : TURN_OVERSHOOT_DURATION;
+
+//  Serial.println(timerTarget);
+//  delay(200);
+
   switch (ts) {
   case TurnStage::OVERSHOOT:
     if (!timer) {
       timer = millis();
-      driveSetSpeeds(MAX_MOTOR_SPEED, MAX_MOTOR_SPEED);
+      motorRun(leftMotor, MAX_MOTOR_SPEED);
+      motorRun(rightMotor, MAX_MOTOR_SPEED);
     }
 
-    if (millis() - timer > FORWARD_ACTION_DURATION) {
+    if (millis() - timer > timerTarget) {
       timer = 0;
+      ts = TurnStage::FIND_EMPTY;
+    }
+    break;
+  case TurnStage::FIND_EMPTY:
+    driveMotorsTurn(a);
+    if (p == qtrPath{0, 0, 0}) {
       ts = TurnStage::TURN;
     }
     break;
   case TurnStage::TURN:
-    qtrPath p = qtrGetPath();
     if (p.front) {
       actionLock = false;
-    } else {
-      driveMotorsTurn(a);
     }
     break;
   }
