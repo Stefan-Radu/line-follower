@@ -7,7 +7,7 @@
 #include "Global.h"
 
 
-#define BLACK_THRESHOLD 600
+#define BLACK_THRESHOLD 400
 //#define READINGS_CNT_TO_UPDATE_PATH 2
 #define SMOOTH_READINGS_CNT_TO_UPDATE 5
 #define EXP_SMOOTH_ALPHA 0.6f // 0.05 at power 10
@@ -359,7 +359,7 @@ qtrPath qtrInterpretValues(int16_t* sensorValues) {
 
   qtrPath res = {0, 0, 0};
   if (!isBlackFarLeft && !isBlackFarRight) {
-    if (qtrCountBlackSensors() >= 2) {
+    if (qtrCountBlackSensors() >= 1) {
       res.front = 1;
     }
   } else {
@@ -374,12 +374,14 @@ qtrPath qtrInterpretValues(int16_t* sensorValues) {
   return res;
 }
 
-#define DEBOUNCE_CNT_TARGET 3
+//#define DEBOUNCE_CNT_TARGET 4
+#define DEBOUNCE_TIME_TARGET 30
 
 qtrPath qtrGetPath() {
   static int16_t consistentReadingsCnt = 0;
   static qtrPath previousPath = {0, 1, 0}, result = {0, 1, 0};
-  static int32_t debounceCnt = 0;
+//  static int32_t debounceCnt = 0;
+  static int32_t debounceTime = 0;
   
   qtr.readCalibrated(sensorValues);
   qtrPath currentPath = qtrInterpretValues(sensorValues);
@@ -392,13 +394,19 @@ qtrPath qtrGetPath() {
 //  Serial.print(currentPath.front);
 //  Serial.println(currentPath.right);
 
+//  if (currentPath != previousPath) {
+//    debounceCnt = 1;
+//  } else {
+//    debounceCnt += 1;
+//  }
   if (currentPath != previousPath) {
-    debounceCnt = 1;
-  } else {
-    debounceCnt += 1;
+    debounceTime = millis();
   }
 
-  if (debounceCnt >= DEBOUNCE_CNT_TARGET) {
+//  if (debounceCnt >= DEBOUNCE_CNT_TARGET) {
+//    result = currentPath;
+//  }
+  if (millis() - debounceTime > DEBOUNCE_TIME_TARGET) {
     result = currentPath;
   }
   previousPath = currentPath;

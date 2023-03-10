@@ -34,8 +34,8 @@ bool isTurning = false;
 bool actionLock = false;
 
 #define TURN_OVERSHOOT_DURATION 150
-#define U_TURN_OVERSHOOT_DURATION 250
-#define BACK_ON_TRACK_DURATION 760
+#define U_TURN_OVERSHOOT_DURATION 150
+#define BACK_ON_TRACK_DURATION 800
 #define SKIP_INTERSECTION_DURATION 150
 
 void driveInit() {
@@ -149,7 +149,7 @@ DriveAction driveGetNextAction() {
       }
     } else if (pathB.left) {
       ret = DriveAction::TURN_LEFT;
-//      Serial.println("turn left");
+      Serial.println("turn left");
 //      delay(500);
     } else if (pathA.front) {
 //      if (previousPath.right) {
@@ -157,14 +157,14 @@ DriveAction driveGetNextAction() {
 //      } else {
         ret = DriveAction::FOLLOW_LINE;
 //      }
-//      Serial.println("go straight");
+      Serial.println("go straight");
     } else if (pathB.right) {
       ret = DriveAction::TURN_RIGHT;
-//      Serial.println("turn right");
+      Serial.println("turn right");
     } else if (/*previousPath.front &&*/ pathA == qtrPath{0, 0, 0}) {
       ret = DriveAction::TURN_AROUND;
        // TODO doua goale la rand == U_TURN
-//      Serial.println("turn around");
+      Serial.println("turn around");
     } else {
       ret = previousAction; 
     }
