@@ -51,9 +51,9 @@ enum ReadingType: uint8_t {
 };
 
 struct qtrPath {
-  uint8_t left: 1,
-          front: 1,
-          right: 1;
+  uint8_t left  : 1,
+          front : 1,
+          right : 1;
 
   bool operator==(const qtrPath &other) const {
     return this->left == other.left && 
@@ -217,18 +217,29 @@ void qtrCalibrate() {
   saveCalibrationData();
 }
 
-qtrIsBlack(uint16_t reading) {
+inline bool qtrIsBlack(uint16_t reading) {
   return reading > BLACK_THRESHOLD;
 }
 
-uint8_t qtrCountBlackSensors() {
+inline uint8_t qtrCountBlackSensors() {
   uint8_t ret = 0;
-  for (int i = 0; i < sensorCount; ++i) {
-    if (qtrIsBlack(sensorValues[i])) {
+  for (uint8_t idx = 0; idx < sensorCount; ++idx) {
+    if (qtrIsBlack(sensorValues[idx])) {
       ret += 1;
     }
   }
+
   return ret;
+}
+
+inline bool qtrBlackSensorsGTEOne() {
+  for (uint8_t idx = 0; idx < sensorCount; ++idx) {
+    if (qtrIsBlack(sensorValues[idx])) {
+        return true;
+    }
+  }
+
+  return false;
 }
 
 // TODO black count back to being just count
@@ -354,12 +365,13 @@ qtrPath qtrInterpretValues(int16_t* sensorValues) {
    *  - line to the right (right turn)
    *  - horizontal line (t-intersection)
    */
+
   bool isBlackFarLeft = qtrIsBlack(sensorValues[0]);
   bool isBlackFarRight = qtrIsBlack(sensorValues[sensorCount - 1]);
 
   qtrPath res = {0, 0, 0};
   if (!isBlackFarLeft && !isBlackFarRight) {
-    if (qtrCountBlackSensors() >= 1) {
+    if (qtrBlackSensorsGTEOne()) {
       res.front = 1;
     }
   } else {
@@ -375,7 +387,7 @@ qtrPath qtrInterpretValues(int16_t* sensorValues) {
 }
 
 //#define DEBOUNCE_CNT_TARGET 4
-#define DEBOUNCE_TIME_TARGET 30
+#define DEBOUNCE_TIME_TARGET 20
 
 qtrPath qtrGetPath() {
   static int16_t consistentReadingsCnt = 0;

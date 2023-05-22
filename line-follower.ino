@@ -65,6 +65,6 @@ void loop(){
   driveQTRCalibrateOnButtonPress();
 //  driveStateUpdate(true);
 //  driveController();
-  DriveAction a = driveGetNextAction();
+  DriveAction a = driveGetAction();
   driveHandleAction(a);
 }
