@@ -7,431 +7,219 @@
 #include "QTRSensorController.h"
 #include "PidController.h"
 
-enum DriveState {
-  STOP,
-  FORWARD,
-  TURNING_LEFT,
-  TURNING_RIGHT,
-} driveState = STOP;
+// TODO figure out wtf to do with driveState
+// momentan pare ca folosesc doar werid state la ceva util
 
-enum class DriveAction {
-  STOP,
-  FOLLOW_LINE,
-  FORWARD,
-  TURN_LEFT,
-  TURN_RIGHT,
-  TURN_AROUND,
+#define TIME_ONE_WHITE_TO_STOP 1000 // millis
+
+// for calibration only these 3 varaibles
+#define MOTOR_TURN_POWER 100
+#define WEIRD_STATE_DURATION 100    // millis
+
+enum class DriveState {
+    STOPPED,
+    TURN,
+    WEIRD_STATE,
+    FORWARD
+} driveState = DriveState::STOPPED;
+
+enum class TurnType {
+    LEFT,
+    RIGHT,
+    AROUND,
+    NO_TURN,
 };
 
-enum DriveMode {
-  FOLLOW_LINE,
-  SOLVE_MAZE,
-} driveMode = SOLVE_MAZE;
-
-Button button;
-
-bool isTurning = false;
-bool actionLock = false;
-
-#define TURN_OVERSHOOT_DURATION 25
-//#define U_TURN_OVERSHOOT_DURATION 150
-#define BACK_ON_TRACK_DURATION 400
-#define SKIP_INTERSECTION_DURATION 50
-
 void driveInit() {
-  motorInit(leftMotor);
-  motorInit(rightMotor);
-  
-  // used to recalibrate the sensor
-  buttonInit(button, BUTTON_PIN);
-  
-  Serial.println("Driver Initialized");
+    motorInit(leftMotor);
+    motorInit(rightMotor);
+    // used to recalibrate the sensor
+    buttonInit(button, BUTTON_PIN);
+    // everything driving-related depends on this
+    qtrInit();
+
+    Serial.println("Driver Initialized");
+}
+
+void driveFollowLine(int16_t turnCompensation = 0) {
+    double error = qtrGetBlackLinePosition();
+    int16_t correction = pidCenterLine(error) + turnCompensation;
+
+    clamp(correction, -MOTOR_RUN_POWER * 2, MOTOR_RUN_POWER * 2);
+    int16_t correctedMotorSpeed = MOTOR_RUN_POWER - abs(correction);
+
+    if (correction < 0) {
+        // left correction
+        motorRun(leftMotor, correctedMotorSpeed);
+        motorRun(rightMotor, MOTOR_RUN_POWER);  
+    } else {
+        // right correction
+        motorRun(leftMotor, MOTOR_RUN_POWER);
+        motorRun(rightMotor, correctedMotorSpeed);
+    }
+
+    driveState = DriveState::FORWARD;
+}
+
+/*
+ * run both motors based on power
+ */
+inline void driveRun(int16_t power) {
+    // TODO account for PID compensation
+    motorRun(leftMotor, power);
+    motorRun(rightMotor, power);
+    driveState = DriveState::FORWARD;
+}
+
+inline void driveRunLeft() {
+    // TODO account for PID compensation
+    motorRun(leftMotor, -MOTOR_TURN_POWER);
+    motorRun(rightMotor, MOTOR_TURN_POWER);
+    driveState = DriveState::TURN;
+}
+
+inline void driveRunRight() {
+    // TODO account for PID compensation
+    motorRun(leftMotor,   MOTOR_TURN_POWER);
+    motorRun(rightMotor, -MOTOR_TURN_POWER);
+    driveState = DriveState::TURN;
+}
+
+/*
+ * stop both motors
+ */
+inline void driveStop() {
+    motorStop(leftMotor);
+    motorStop(rightMotor);
+    driveState = DriveState::STOPPED;
+}
+
+/*
+ * power motors on for d milliseconds
+ * if power is positive go forward
+ * if power is negative go backward
+ * blocking!!
+ */
+// TODO dubious utility
+void driveForMillis(int16_t power, int16_t d) {
+    driveRun(power);
+    delay(d);
+    driveStop();
 }
 
 /*
  * if too much time is spent on white STOP
  */
-void driveCheckToStop(const int &t) {
-  if (t - millis() > TIME_ONE_WHITE_TO_STOP) {
-    driveState = STOP;
-  }
+//inline void driveCheckToStop(const int &t) {
+    //if (t - millis() > TIME_ONE_WHITE_TO_STOP) {
+        //driveState = DriveState::STOPPED;
+    //}
+//}
+
+inline TurnType driveDetectTurn(const qtrPath &p) {
+    if (p.leftPath) {
+        return TurnType::LEFT;
+    } else if (p.centerPath) {
+        return TurnType::NO_TURN;
+    } else if (p.rightPath) {
+        return TurnType::RIGHT;
+    } else {
+        return TurnType::AROUND;
+    }
+}
+
+// TODO can be made non blocking with a global driving 
+// union state structure which holds all necessary details
+
+/*
+ * !!THIS IS A BLOCKING ACTION!!
+ *
+ * turning behavior
+ * turn in the corresponding drirection until a line
+ * is detected on the outer edge. then switch back to
+ * line follow 
+ *
+ * !!THIS IS A BLOCKING ACTION!!
+ */
+inline void driveTurn(const TurnType &turnType) {
+    if (turnType == TurnType::LEFT) {
+        driveRunLeft();
+    } else {
+        driveRunRight();
+    }
+
+    while (true) {
+        qtrReadCalibrated();
+        if ((turnType == TurnType::LEFT && qtrDetectFarLeft())
+                || (turnType != TurnType::LEFT && qtrDetectFarRight())) {
+            break;
+        }
+    }
+    driveFollowLine();
+    driveState = DriveState::FORWARD;
+}
+
+inline void driveTurnHandle(const TurnType &turnType) {
+    // TODO set return variable to turn character
+    switch (turnType) {
+        case TurnType::NO_TURN:
+            driveFollowLine();
+            break;
+        case TurnType::LEFT:
+        case TurnType::AROUND:
+        case TurnType::RIGHT:
+            driveTurn(turnType);
+            break;
+    }
+    driveState = DriveState::FORWARD;
 }
 
 /*
- * TODO is it too much indirection?
- * should I have states change by themselves, instead of having a master changer?
+ * I have two impelemntation ideas.
+ * The first one is time based and drives forward past an intersection
+ * for a certain amount of time.
+ * The second one drives past an intersection until it doesn't see left or right
+ * anymore and is time-based only for uturns
+ *
+ * TODO I'll have to test both, but I prefer the first one as it's easier to
+ * implement
+ * TODO ahah nvm le pot combina. pot avea un minimum time si check de st dr.
+ * daca inca am stanga dreapta mai continui putin
  */
-void driveStateUpdate(bool debug = false) {
-  static int32_t lastTimeOnBlack = 0;
-  static int32_t turnTimer = 0;
+void drive() {
+    // first variant
+    static int32_t weirdStateStart = 0;
+    static qtrPath cumulativePath = {0, 0, 0};
 
-  if (driveMode == FOLLOW_LINE) {
-    qtrBlackSensorCount cnt = qtrSmoothSensorBlackCount();
-    if (cnt.total == 0) {
-      driveCheckToStop(lastTimeOnBlack);
-    } else {
-      lastTimeOnBlack = millis();
-      driveState = FORWARD;
+    if (driveState == DriveState::STOPPED) {
+        return;
     }
-  } else if (driveMode == SOLVE_MAZE) {
-    qtrSmoothUpdatePath();
-    qtrSmoothPrintPath();
-
-    PathType pathNow = smoothSensorInfo.currentPathType;
-    if (driveState == FORWARD) {  
-      if (pathNow == LEFT_TURN || pathNow == T_INTERSECTION) {
-        driveState = TURNING_LEFT;
-        turnTimer = millis();
-      } else if (pathNow == RIGHT_TURN || pathNow == U_TURN) {
-        driveState = TURNING_RIGHT;
-        turnTimer = millis();
-      }
-    } else if (pathNow == LINE && millis() - turnTimer > 250) {
-      driveState = FORWARD;
-    }
-
-    if (pathNow != EMPTY) {
-      lastTimeOnBlack = millis();
-      if (driveState == STOP) {
-        driveState = FORWARD;
-      }
-    } else {
-       // se oprea imediat asa ca am scos asta
-//      driveCheckToStop(lastTimeOnBlack);
-    }
-  }
- 
-  if (debug) {
-    Serial.println(driveState);
-  }
-}
-
-bool driveIsTurn(const DriveAction &a) {
-  return a == DriveAction::TURN_LEFT ||
-         a == DriveAction::TURN_RIGHT ||
-         a == DriveAction::TURN_AROUND;
-}
-
-DriveAction driveGetAction() {
-    static uint32_t timer = 0;
-    static qtrPath last_side_road = qtrPath{0, 0, 0};
-    static DriveAction prevAction = DriveAction::STOP;
 
     qtrPath pathNow = qtrGetPath();
 
-    if (pathNow.left) {
-        last_side_road = qtrPath{1, 0, 0};
-    } else if (pathNow.right) {
-        last_side_road = qtrPath{0, 0, 1};
-    }
-
-    DriveAction ret = DriveAction::STOP;
-
-    if (actionLock) {
-        ret = prevAction;
+    if (driveState == DriveState::WEIRD_STATE) {
+        driveRun(MOTOR_TURN_POWER);
+        cumulativePath |= pathNow;
+        if (millis() - weirdStateStart > WEIRD_STATE_DURATION
+                && !pathNow.leftPath && !pathNow.rightPath) {
+            driveState = DriveState::TURN;
+            TurnType turnType = driveDetectTurn(cumulativePath);
+            // !! BLOCKING !!
+            driveTurnHandle(turnType);
+        }
     } else {
-        if (driveIsTurn(prevAction)) {
-          timer = millis();
-          ret = DriveAction::FOLLOW_LINE;
-        } else if (timer != 0) {
-          ret = DriveAction::FOLLOW_LINE;
-          if (millis() - timer > BACK_ON_TRACK_DURATION) {
-            timer = 0;
-            // after a turn is finished reset this 
-            // such that the next turn doesn't get 
-            // messed up by previous data
-            last_side_road = qtrPath{0, 0, 0};
-          }
-        } else if (pathNow.left) {
-            ret = DriveAction::TURN_LEFT;
-            Serial.println("turn left");
-        } else if (pathNow.front) {
-            ret = DriveAction::FOLLOW_LINE;
-            //Serial.println("forwards");
-        } else if (pathNow == qtrPath{0, 0, 0}) {
-            ret = DriveAction::TURN_RIGHT;
-            Serial.println("turn right");
+        if (!pathNow.centerPath 
+                || pathNow.leftPath
+                || pathNow.rightPath) {
+            driveRun(MOTOR_TURN_POWER);
+            cumulativePath = pathNow;
+            weirdStateStart = millis();
+            driveState = DriveState::WEIRD_STATE;
         } else {
-            ret = prevAction;
+            driveFollowLine();
+            driveState = DriveState::FORWARD;
         }
     }
-
-    prevAction = ret;
-    return ret;
-}
-
-// TODO redo this simpler in driveGetAction
-//DriveAction driveGetNextAction() {
-  //static uint32_t timer = 0;
-  //static DriveAction previousAction = DriveAction::STOP;
-  //static qtrPath pathA = {0, 1, 0}, pathB = {0, 0, 0};
-
-  //qtrPath newReading = qtrGetPath();
-  //if (newReading != pathA) {
-    //pathB = pathA;
-    //pathA = newReading;
-  //}
-
-////  Serial.print(pathA.left);
-////  Serial.print(" ");
-////  Serial.print(pathA.front);
-////  Serial.print(" ");
-////  Serial.print(pathA.right);
-////  Serial.print(" | ");
-////  Serial.print(pathB.left);
-////  Serial.print(" ");
-////  Serial.print(pathB.front);
-////  Serial.print(" ");
-////  Serial.println(pathB.right);
-  
-  //DriveAction ret;
-  //if (actionLock == true) {
-    //ret = previousAction;
-  //} else {
-    //if (driveIsTurn(previousAction)) {
-      //timer = millis();
-      //ret = DriveAction::FOLLOW_LINE;
-    //} else if (timer != 0) {
-      //ret = DriveAction::FOLLOW_LINE;
-      //if (millis() - timer > BACK_ON_TRACK_DURATION) {
-        //timer = 0;
-      //}
-    //} else if (pathB.left) {
-      //ret = DriveAction::TURN_LEFT;
-      //Serial.println("turn left");
-////      delay(500);
-    //} else if (pathA.front) {
-////      if (previousPath.right) {
-////        ret = DriveAction::FORWARD;
-////      } else {
-        //ret = DriveAction::FOLLOW_LINE;
-////      }
-      //Serial.println("go straight");
-    //} else if (pathB.right) {
-      //ret = DriveAction::TURN_RIGHT;
-      //Serial.println("turn right");
-    //} else if ([>previousPath.front &&<] pathA == qtrPath{0, 0, 0}) {
-      //ret = DriveAction::TURN_AROUND;
-       //// TODO doua goale la rand == U_TURN
-      //Serial.println("turn around");
-    //} else {
-      //ret = previousAction; 
-    //}
-  //}
-
-  //previousAction = ret;
-////  previousPath = currentPath;
-////  delay(100);
-  //return ret;
-//}
-
-void driveStop() {
-  motorStop(leftMotor);
-  motorStop(rightMotor);
-}
-
-void driveMotorsTurn(const DriveAction &a) {
-  switch (a) {
-  case DriveAction::TURN_LEFT:
-    motorRun(leftMotor, -TURN_MOTOR_SPEED);
-    motorRun(rightMotor, TURN_MOTOR_SPEED);
-    break;
-  case DriveAction::TURN_RIGHT:
-  case DriveAction::TURN_AROUND:
-    motorRun(leftMotor, TURN_MOTOR_SPEED);
-    motorRun(rightMotor, -TURN_MOTOR_SPEED);
-    break;
-  }
-}
-
-void driveForw() {
-  static uint32_t timer = 0;
-  
-  if (!actionLock) {
-    actionLock = true;
-    timer = millis();
-  }
-
-  motorRun(leftMotor, MAX_MOTOR_SPEED);
-  motorRun(rightMotor, MAX_MOTOR_SPEED);
-
-  if (millis() - timer > SKIP_INTERSECTION_DURATION) {
-    actionLock = false;
-  }
-}
-
-enum class TurnStage {
-  OVERSHOOT,
-  FIND_EMPTY,
-  TURN,
-};
-
-void driveTurn(const DriveAction &a) {
-  static TurnStage ts;
-  static uint32_t timer = 0;
-
-  if (!actionLock) {
-    actionLock = true;
-    ts = TurnStage::OVERSHOOT;
-  }
-
-  qtrPath path = qtrGetPath();
-  // TODO i'm testing if the overshoot duration can be constant 
-  // disregarding the type of turn
-  //
-  // this is how it was before
-  //uint16_t timerTarget = (a == DriveAction::TURN_AROUND) ?
-    //U_TURN_OVERSHOOT_DURATION : TURN_OVERSHOOT_DURATION;
-  uint16_t timerTarget = TURN_OVERSHOOT_DURATION;
-
-//  Serial.println(timerTarget);
-//  delay(200);
-
-  switch (ts) {
-  case TurnStage::OVERSHOOT:
-    if (!timer) {
-      // this mean I'm here for the first time
-      timer = millis();
-      // overshooting by going forward
-      motorRun(leftMotor, MAX_MOTOR_SPEED);
-      motorRun(rightMotor, MAX_MOTOR_SPEED);
-    }
-
-    if (millis() - timer > timerTarget) {
-      timer = 0; // reset timer
-      ts = TurnStage::FIND_EMPTY;
-    }
-    break;
-  case TurnStage::FIND_EMPTY:
-    driveMotorsTurn(a);
-    // look for nothing on the sensor
-    // signifying I'm on white
-    if (path == qtrPath{0, 0, 0}) {
-      ts = TurnStage::TURN;
-    }
-    break;
-  case TurnStage::TURN:
-    // look for somthing on the sensor
-    // signifying a line hit
-    if (path.front || path.left || path.right) {
-      actionLock = false;
-    }
-    break;
-  }
-}
-
-void driveForward(int16_t turnCompensation = 0) {
-  double error = qtrGetBlackLinePosition();
-  int16_t correction = pidCenterLine(error) + turnCompensation;
-  
-  clamp(correction, -MAX_MOTOR_SPEED * 2, MAX_MOTOR_SPEED * 2);
-  int16_t correctedMotorSpeed = MAX_MOTOR_SPEED - abs(correction);
- 
-  if (correction < 0) {
-    // left correction
-    motorRun(leftMotor, correctedMotorSpeed);
-    motorRun(rightMotor, MAX_MOTOR_SPEED);  
-  } else {
-    // right correction
-    motorRun(leftMotor, MAX_MOTOR_SPEED);
-    motorRun(rightMotor, correctedMotorSpeed);
-  }
-}
-
-void simulateDriveForward() {
-  /*
-   * this is for testing only!! 
-   * TODO remove when done
-   */
-  double error = qtrGetBlackLinePosition();
-  Serial.print("Error ");
-  Serial.println(error);
-  
-  int16_t correction = pidCenterLine(error, true);
-  Serial.print("Correction: ");
-  Serial.println(correction);
-  int16_t correctedMotorSpeed = MAX_MOTOR_SPEED - abs(correction);
- 
-  if (correction < 0) {
-    Serial.println("Left Correction");
-  } else {
-    Serial.println("Right Correction");
-  }
-  delay(500);
-}
-
-// TODO this should be removed I'm pretty sure
-//void driveTurn(bool left) {
-  //static bool overshooting = false;
-  
-  //if (isTurning == false) {
-    //isTurning = true;
-    //overshooting = true;
-  //}
-
-  //PathType pathNow = smoothSensorInfo.currentPathType;
-  //if (overshooting) {
-    //driveForward();
-    //if (pathNow == LINE || pathNow == EMPTY) {
-      //overshooting = false;    
-    //}
-  //} else {
-    //if (left) {
-      //motorRun(leftMotor, -MAX_MOTOR_SPEED);
-      //motorRun(rightMotor, MAX_MOTOR_SPEED);  
-    //} else {
-      //motorRun(leftMotor, MAX_MOTOR_SPEED);
-      //motorRun(rightMotor, -MAX_MOTOR_SPEED);  
-    //}
-    //if (pathNow == LINE) {
-      //driveState = FORWARD;
-      //isTurning = false;
-    //}
-  //}
-//}
-
-void driveController() {
-  switch (driveState) {
-    case STOP:
-      driveStop();
-      break;
-    case FORWARD:
-      driveForward();
-      break;
-    case TURNING_LEFT:
-//      driveTurn(1);
-      driveForward(-MAX_MOTOR_SPEED * 20);
-      break;
-    case TURNING_RIGHT:
-      driveForward(MAX_MOTOR_SPEED * 20);
-//      driveTurn(0);
-      break;
-  }
-}
-
-void driveHandleAction(const DriveAction &a) {
-  switch (a) {
-  case DriveAction::FOLLOW_LINE:
-    driveForward(); // TODO rename this 
-    break;
-  case DriveAction::FORWARD:
-    driveForw(); // TODO rename this
-    break;
-  case DriveAction::TURN_LEFT:
-  case DriveAction::TURN_RIGHT:
-  case DriveAction::TURN_AROUND:
-    driveTurn(a);
-    break;
-  }
-}
-
-void driveQTRCalibrateOnButtonPress() {
-  bool p = buttonDetectPress(button);
-  if (p == 1) {
-    driveState = STOP;
-    driveStop();
-    qtrCalibrate();
-  }
 }
 
 #endif

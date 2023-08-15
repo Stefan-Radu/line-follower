@@ -6,424 +6,259 @@
 #include "MotorController.h"
 #include "Global.h"
 
-
+#define SENSOR_COUNT 8
 #define BLACK_THRESHOLD 400
-//#define READINGS_CNT_TO_UPDATE_PATH 2
-#define SMOOTH_READINGS_CNT_TO_UPDATE 5
-#define EXP_SMOOTH_ALPHA 0.6f // 0.05 at power 10
+#define EEPROM_CALIBRATION_DATA_ADDRESS 0
 
 QTRSensors qtr;
-
-const uint8_t sensorCount = 8;
-uint16_t sensorValues[sensorCount];
-
-// for 3 readings
-//enum PathType: uint8_t {
-//  EMPTY,
-//  LINE,
-//  LEFT_TURN,
-//  RIGHT_TURN,
-//  CROSS_INTERSECTION,
-//  T_INTERSECTION,
-//  LEFT_T_INTERSECTION,
-//  RIGHT_T_INTERSECTION,
-//  DEAD_END,
-//  DESTINATION
-//};
-
-// for 2 readings
-enum PathType: uint8_t {
-  EMPTY,
-  LINE,
-  LEFT_TURN,
-  RIGHT_TURN,
-  T_INTERSECTION,
-  U_TURN,
-  DESTINATION
-};
-
-enum ReadingType: uint8_t {
-  NOTHING,
-  VERTICAL,
-  FULL_HORIZONTAL,
-  LEFT_HORIZONTAL,
-  RIGHT_HORIZONTAL
-};
+uint16_t sensorValues[SENSOR_COUNT];
 
 struct qtrPath {
-  uint8_t left  : 1,
-          front : 1,
-          right : 1;
+    uint8_t leftPath   : 1,
+            centerPath : 1,
+            rightPath  : 1;
 
-  bool operator==(const qtrPath &other) const {
-    return this->left == other.left && 
-           this->front == other.front &&
-           this->right == other.right;
-  }
+    bool operator==(const qtrPath &other) const {
+        return this->leftPath   == other.leftPath
+            && this->centerPath == other.centerPath
+            && this->rightPath  == other.rightPath;
+    }
 
-  bool operator!=(const qtrPath &other) const {
-    return !(*this == other);
-  }
+    bool operator!=(const qtrPath &other) const {
+        return !(*this == other);
+    }
+
+    void operator|=(const qtrPath &other) {
+        this->leftPath   |= other.leftPath;
+        this->centerPath |= other.centerPath;
+        this->rightPath  |= other.rightPath;
+    }
 };
 
-struct qtrSmoothSensorInfo {
-  uint8_t readings;
-  uint16_t values[sensorCount];
-  PathType currentPathType;
-  ReadingType pastReadings[2];
-//  ReadingType pastReadings[3];
-} smoothSensorInfo;
+const qtrPath qtrNullPath = {0, 0, 0};
 
-struct qtrBlackSensorCount {
-  uint8_t leftSide: 2,
-          rightSide: 2,
-          total: 4;
-};
-
-void qtrInit() {
-  // configure the sensors
-  qtr.setTypeAnalog();
-  qtr.setSensorPins((const uint8_t[]){A7, A6, A5, A4, A3, A2, A1, A0}, sensorCount);
-
-  smoothSensorInfo = {
-    .readings = 0,
-    .values = {0, 0, 0, 0, 0, 0},
-    .currentPathType = EMPTY,
-    .pastReadings = {NOTHING, NOTHING}
-  };
-  
-  delay(500);
-  Serial.println("QTR Initialized");
+/*
+ * just a wrapper to simplify the api
+ */
+inline void qtrReadCalibrated() {
+    qtr.readCalibrated(sensorValues);
 }
 
-void saveCalibrationData() {
-  int16_t address = EEPROM_CALIBRATION_DATA_ADDRESS;
-  for (int i = 0; i < sensorCount; ++i) {
-    EEPROM.put(address, qtr.calibrationOn.minimum[i]);
-    address += sizeof(qtr.calibrationOn.minimum[i]);
-  }
-  for (int i = 0; i < sensorCount; ++i) {
-    EEPROM.put(address, qtr.calibrationOn.maximum[i]);
-    address += sizeof(qtr.calibrationOn.maximum[i]);
-  }
-
-  Serial.println("Calibration Data saved");
+inline bool qtrIsBlack(uint16_t reading) {
+    return reading > BLACK_THRESHOLD;
 }
 
+inline bool qtrDetectFarLeft() {
+    return qtrIsBlack(sensorValues[0]);
+}
+
+inline bool qtrDetectFarRight() {
+    return qtrIsBlack(sensorValues[SENSOR_COUNT - 1]);
+}
+
+/*
+ * load data from past calibration
+ * which was saved in EEPROM
+ *
+ * calibration data is defines as a minimum and maximum
+ * threshold for each of the sensors
+ */
 void loadCalibrationData() {
-  int16_t address = EEPROM_CALIBRATION_DATA_ADDRESS;
-  
-  if (qtr.calibrationOn.minimum == NULL) {
-    qtr.calibrationOn.minimum = (uint16_t*) calloc(sensorCount, sizeof(uint16_t));
-  }
-  for (int8_t i = 0; i < sensorCount; ++i) {
-    EEPROM.get(address, qtr.calibrationOn.minimum[i]);
-    address += sizeof(qtr.calibrationOn.minimum[i]);
-  }
+    int16_t address = EEPROM_CALIBRATION_DATA_ADDRESS;
 
-  if (qtr.calibrationOn.maximum == NULL) {
-    qtr.calibrationOn.maximum = (uint16_t*) calloc(sensorCount, sizeof(uint16_t));
-  }
-  for (int8_t i = 0; i < sensorCount; ++i) {
-    EEPROM.get(address, qtr.calibrationOn.maximum[i]);
-    address += sizeof(qtr.calibrationOn.maximum[i]);
-  }
+    if (qtr.calibrationOn.minimum == NULL) {
+        qtr.calibrationOn.minimum = (uint16_t*) calloc(SENSOR_COUNT, sizeof(uint16_t));
+    }
+    for (int8_t i = 0; i < SENSOR_COUNT; ++i) {
+        EEPROM.get(address, qtr.calibrationOn.minimum[i]);
+        address += sizeof(qtr.calibrationOn.minimum[i]);
+    }
 
-  qtr.calibrationOn.initialized = true;
-  Serial.println("Calibration Data loaded");
+    if (qtr.calibrationOn.maximum == NULL) {
+        qtr.calibrationOn.maximum = (uint16_t*) calloc(SENSOR_COUNT, sizeof(uint16_t));
+    }
+    for (int8_t i = 0; i < SENSOR_COUNT; ++i) {
+        EEPROM.get(address, qtr.calibrationOn.maximum[i]);
+        address += sizeof(qtr.calibrationOn.maximum[i]);
+    }
+
+    qtr.calibrationOn.initialized = true;
+    Serial.println("Calibration Data loaded");
+}
+
+/*
+ * iterate all sensors and save minimum and maximum thresholds
+ * to predefined addresses in the EEPROM
+ * this is useful because the calibration can be done once
+ * and reused later just by loading these values
+ */
+void saveCalibrationData() {
+    int16_t address = EEPROM_CALIBRATION_DATA_ADDRESS;
+    for (int i = 0; i < SENSOR_COUNT; ++i) {
+        EEPROM.put(address, qtr.calibrationOn.minimum[i]);
+        address += sizeof(qtr.calibrationOn.minimum[i]);
+    }
+    for (int i = 0; i < SENSOR_COUNT; ++i) {
+        EEPROM.put(address, qtr.calibrationOn.maximum[i]);
+        address += sizeof(qtr.calibrationOn.maximum[i]);
+    }
+
+    Serial.println("Calibration Data saved");
+}
+
+// TODO please test that the sensor orientation is as expected
+/*
+ * initialize qtr sensors and load previous calibration data from EEPROM
+ */
+void qtrInit() {
+    qtr.setTypeAnalog();
+    qtr.setSensorPins((const uint8_t[]){A7, A6, A5, A4, A3, A2, A1, A0}, SENSOR_COUNT);
+
+    delay(500);
+    Serial.println("QTR Initialized");
+
+    loadCalibrationData();  
 }
 
 /*
  * return black line position as a number between -1 and 1
- * where -1 is far left
- * and 1 is far right
+ * where -1 is far left and 1 is far right
  */
-double qtrGetBlackLinePosition(bool debug = false) {
-  /* 
-   * according to qtr documentation: 
-   * res is between 0 and 5000 
-   * I want to map it to a better interval 
-   */
-  int16_t res = qtr.readLineBlack(sensorValues);
-  double linePos = doubleMap(res, SENSOR_MIN_VALUE, SENSOR_MAX_VALUE, LINE_POS_FAR_LEFT, LINE_POS_FAR_RIGHT);
+double qtrGetBlackLinePosition() {
+    /* 
+     * according to qtr documentation: 
+     * res is between 0 and 1000 * SENSOR_COUNT
+     */
+    static const double linePosMinValue = 0;
+    static const double linePosMaxValue = SENSOR_COUNT * 1000;
 
-  if (debug) {
-    // TODO remove this when done with it
-    for (uint8_t i = 0; i < sensorCount; ++i) {
-      Serial.print(sensorValues[i]);
-      Serial.print('\t');
+    static const double linePosMappedLow = -1.0;
+    static const double linePosMappedHigh = 1.0;
+
+    int16_t readLinePos = qtr.readLineBlack(sensorValues);
+    double mappedLinePos = doubleMap(readLinePos, linePosMinValue,
+            linePosMaxValue, linePosMappedLow, linePosMappedHigh);
+
+#ifdef DEBUG
+    for (uint8_t i = 0; i < SENSOR_COUNT; ++i) {
+        Serial.print(sensorValues[i]);
+        Serial.print('\t');
     }
     Serial.print(">> ");
-    Serial.print(linePos);
+    Serial.print(mappedLinePos);
     Serial.print(" <<");
     Serial.print('\n');
-  }
-  
-  return linePos;
+#endif
+
+    return mappedLinePos;
 }
 
+/*
+ * !! THIS IS BLOCKING !!
+ * calibrate sensors
+ * !! THIS IS BLOCKING !!
+ */
 void qtrCalibrate() {
-  Serial.println("QTR Sensor calibrating...");
-  
-  delay(500);
-  pinMode(LED_BUILTIN, OUTPUT);
-  
-  digitalWrite(LED_BUILTIN, HIGH); // turn on Arduino's LED to indicate we are in calibration mode
+    static const float calibrationOuterThreshold = 0.9;
+    static const float calibrationInnerThreshold = 0.1;
 
-  int16_t motorPower = MAX_MOTOR_SPEED;
-  
-  // analogRead() takes about 0.1 ms on an AVR.
-  // 0.1 ms per sensor * 4 samples per sensor read (default) * 6 sensors
-  // * 10 reads per calibrate() call = ~24 ms per calibrate() call.
-  // Call calibrate() 400 times to make calibration take about 10 seconds.
-  for (uint16_t i = 0; i < 400; i++) {
-    qtr.calibrate();
-    double linePos = qtrGetBlackLinePosition();
-    /*
-     * TODO write oscialate() function
-     * oscilate between the left part of the line
-     * and the right side of the line
-     */
-    if ((linePos < -CALIBRATION_OUTER_THRESHOLD && motorPower > 0) ||
-        (linePos > CALIBRATION_OUTER_THRESHOLD && motorPower < 0)) {
-      motorPower *= -1;
+    static const int16_t calibrationMotorPower = 100;
+
+    int16_t motorPower = calibrationMotorPower; 
+
+    Serial.println("QTR Sensor calibrating...");
+
+    delay(500);
+    pinMode(LED_BUILTIN, OUTPUT);
+    // turn on Arduino's LED to indicate we are in calibration mode
+    digitalWrite(LED_BUILTIN, HIGH);
+
+    // analogRead() takes about 0.1 ms on an AVR.
+    // 0.1 ms per sensor * 4 samples per sensor read (default) * 6 sensors
+    // * 10 reads per calibrate() call = ~24 ms per calibrate() call.
+    // Call calibrate() 400 times to make calibration take about 10 seconds.
+    for (uint16_t i = 0; i < 400; i++) {
+        qtr.calibrate();
+        double linePos = qtrGetBlackLinePosition();
+        /*
+         * TODO write oscialate() function
+         * oscilate between the left part of the line
+         * and the right side of the line
+         */
+        if ((linePos < -calibrationOuterThreshold && motorPower > 0) ||
+                (linePos > calibrationOuterThreshold && motorPower < 0)) {
+            motorPower *= -1;
+        }
+        motorRun(leftMotor, motorPower);
+        motorRun(rightMotor, -motorPower);
     }
+
+    /*
+     * TODO fix this as it's brokend and throws the robot sideways
+     * do this to somewhat center the robot on
+     * the line after callibration
+     */
+    motorPower *= -1;
     motorRun(leftMotor, motorPower);
     motorRun(rightMotor, -motorPower);
-  }
-
-  /*
-   * TODO fix this as it's brokend and throws the robot sideways
-   * do this to somewhat center the robot on
-   * the line after callibration
-   */
-  motorPower *= -1;
-  motorRun(leftMotor, motorPower);
-  motorRun(rightMotor, -motorPower);
-  while (1) {
-    double linePos = qtrGetBlackLinePosition();
-    if (linePos > -CALIBRATION_INNER_THRESHOLD && linePos < CALIBRATION_INNER_THRESHOLD) {
-      break;
+    while (1) {
+        double linePos = qtrGetBlackLinePosition();
+        if (linePos > -calibrationInnerThreshold && linePos < calibrationInnerThreshold) {
+            break;
+        }
     }
-  }
 
-  motorStop(leftMotor);
-  motorStop(rightMotor);
-  digitalWrite(LED_BUILTIN, LOW); // turn off Arduino's LED to indicate we are through with calibration
-  
-  delay(500);
-  Serial.println("QTR Sensor calibrated");
+    motorStop(leftMotor);
+    motorStop(rightMotor);
 
-  saveCalibrationData();
-}
+    // turn off Arduino's LED to indicate we are through with calibration
+    digitalWrite(LED_BUILTIN, LOW);
 
-inline bool qtrIsBlack(uint16_t reading) {
-  return reading > BLACK_THRESHOLD;
+    delay(500);
+    Serial.println("QTR Sensor calibrated");
+
+    // save calibration data to EEPROM
+    saveCalibrationData();
 }
 
 inline uint8_t qtrCountBlackSensors() {
-  uint8_t ret = 0;
-  for (uint8_t idx = 0; idx < sensorCount; ++idx) {
-    if (qtrIsBlack(sensorValues[idx])) {
-      ret += 1;
+    uint8_t ret = 0;
+    for (uint8_t idx = 0; idx < SENSOR_COUNT; ++idx) {
+        if (qtrIsBlack(sensorValues[idx])) {
+            ret += 1;
+        }
     }
-  }
 
-  return ret;
+    return ret;
 }
 
-inline bool qtrBlackSensorsGTEOne() {
-  for (uint8_t idx = 0; idx < sensorCount; ++idx) {
-    if (qtrIsBlack(sensorValues[idx])) {
-        return true;
-    }
-  }
-
-  return false;
-}
-
-// TODO black count back to being just count
-qtrBlackSensorCount qtrSmoothSensorBlackCount() {
-  qtrBlackSensorCount ret = {0, 0, 0};
-  for (int i = 0; i < sensorCount / 2; ++i) {
-    ret.leftSide += qtrIsBlack(smoothSensorInfo.values[i]);
-  }
-  for (int i = sensorCount / 2; i < sensorCount; ++i) {
-    ret.rightSide += qtrIsBlack(smoothSensorInfo.values[i]);
-  }
-  ret.total = ret.leftSide + ret.rightSide;
-  return ret;
-}
-
-void qtrSmoothReadCalibrated() {
-  /* 
-   * do exponential smoothing to reduce errors
-   * that means that the smooth calibrated value sv:
-   * sv_n = sv_n * (1 - alpha) + alpha * reading_now 
-   */
-  qtr.readCalibrated(sensorValues);
-  for (int i = 0; i < sensorCount; ++i) {
-    smoothSensorInfo.values[i] = 1.0f * smoothSensorInfo.values[i] * (1 - EXP_SMOOTH_ALPHA) +
-                                 EXP_SMOOTH_ALPHA * sensorValues[i];
-  }
-  smoothSensorInfo.readings += 1;
-}
-
-bool qtrSmoothUpdateReadings() {
-  // return true if updated
-  qtrSmoothReadCalibrated();
-
-  if (smoothSensorInfo.readings == SMOOTH_READINGS_CNT_TO_UPDATE) {
-    smoothSensorInfo.readings = 0;
-   
-    // shift down past readings to make room for new reading
-//    smoothSensorInfo.pastReadings[2] = smoothSensorInfo.pastReadings[1];
-    smoothSensorInfo.pastReadings[1] = smoothSensorInfo.pastReadings[0];
-    
-    qtrBlackSensorCount cnt = qtrSmoothSensorBlackCount();
-    if (cnt.total < 2) {
-      smoothSensorInfo.pastReadings[0] = NOTHING; 
-    } else if (cnt.total <= 4) {
-      smoothSensorInfo.pastReadings[0] = VERTICAL;
-    } else if (cnt.total <= 5 && cnt.leftSide == 3) {
-      smoothSensorInfo.pastReadings[0] = LEFT_HORIZONTAL;
-    } else if (cnt.total <= 5 && cnt.rightSide == 3) {
-      smoothSensorInfo.pastReadings[0] = RIGHT_HORIZONTAL;
-    } else if (cnt.total == 6) {
-      smoothSensorInfo.pastReadings[0] = FULL_HORIZONTAL;
-    } else {
-      smoothSensorInfo.pastReadings[0] = VERTICAL;
-    }
-    
-    return 1;
-  }
-
-  return 0;
-}
-
-bool qtrUpdatedReadings() {
-  return smoothSensorInfo.readings = 0;
-}
-
-void qtrSmoothUpdatePath() {
-  bool updated = qtrSmoothUpdateReadings();
-  if (!updated) {
-    return;
-  }
-
-  if (smoothSensorInfo.pastReadings[0] == VERTICAL) {
-    smoothSensorInfo.currentPathType = LINE;
-  } else if (smoothSensorInfo.pastReadings[0] == LEFT_HORIZONTAL) {
-    smoothSensorInfo.currentPathType = LEFT_TURN;
-  } else if (smoothSensorInfo.pastReadings[0] == RIGHT_HORIZONTAL) {
-    smoothSensorInfo.currentPathType = RIGHT_TURN;
-  } else if (smoothSensorInfo.pastReadings[0] == FULL_HORIZONTAL) {
-    smoothSensorInfo.currentPathType = T_INTERSECTION;
-  } else if (smoothSensorInfo.pastReadings[0] == NOTHING) {
-    if (smoothSensorInfo.pastReadings[1] == VERTICAL) {
-      smoothSensorInfo.currentPathType = U_TURN;
-    } else {
-      smoothSensorInfo.currentPathType = EMPTY;
-    }
-  } else {
-    smoothSensorInfo.currentPathType = LINE;
-  }
-}
-
-qtrSmoothPrintPath() {
-  String s = "";
-  switch (smoothSensorInfo.currentPathType) {
-    case EMPTY:
-      s = "EMPTY";
-      break;
-    case LINE:
-      s = "LINE";
-      break;
-    case LEFT_TURN:
-      s = "LEFT_TURN";
-      break;
-    case RIGHT_TURN:
-      s = "RIGHT_TURN";
-      break;
-    case U_TURN:
-      s = "U_TURN";
-      break;
-    case T_INTERSECTION:
-      s = "T_INTERSECTION";
-      break;
-  }
-
-  Serial.println(s);
-}
-
-qtrPath qtrInterpretValues(int16_t* sensorValues) {
-  /*
-   * Get sensor values and output qtrPath struct reflecting 
-   * an interpretation of the previous reading:
-   *  - line in the center
-   *  - line to the left (left turn)
-   *  - line to the right (right turn)
-   *  - horizontal line (t-intersection)
-   */
-
-  bool isBlackFarLeft = qtrIsBlack(sensorValues[0]);
-  bool isBlackFarRight = qtrIsBlack(sensorValues[sensorCount - 1]);
-
-  qtrPath res = {0, 0, 0};
-  if (!isBlackFarLeft && !isBlackFarRight) {
-    if (qtrBlackSensorsGTEOne()) {
-      res.front = 1;
-    }
-  } else {
-    if (isBlackFarLeft) {
-      res.left = 1;
-    }
-    if (isBlackFarRight) {
-      res.right = 1;
-    }
-  }
-
-  return res;
-}
-
-//#define DEBOUNCE_CNT_TARGET 4
-#define DEBOUNCE_TIME_TARGET 20
-
+/*
+ * return qtrPath struct reflecting 
+ * where the sensor sees black
+ * - far left
+ * - far right
+ * - center
+ */
 qtrPath qtrGetPath() {
-  static int16_t consistentReadingsCnt = 0;
-  static qtrPath previousPath = {0, 1, 0}, result = {0, 1, 0};
-//  static int32_t debounceCnt = 0;
-  static int32_t debounceTime = 0;
-  
-  qtr.readCalibrated(sensorValues);
-  qtrPath currentPath = qtrInterpretValues(sensorValues);
+    /*
+     * TODO functia asta e apelata deja in qtrGetBlackLinePosition
+     * care e apelata in functia de read follow line din drive
+     * voi face o functie de qtrUpdate care trebuie apelata in fiecare
+     * bucla si de care depinde resul codului
+     * TREBUIE sa ma asigur ca alta citire de senzori nu are loc in alta parte
+     * asta ar trebui sa minimizeze latency-ul foarte mult
+     * TODO test pentru qtr read si print sensor data
+     */
+    qtrReadCalibrated(); // TODO vezi deasupra mare atentie la latency cu asta
 
-//  if (currentPath == qtrPath{0, 0, 0}) {
-//    Serial.println("nimiiic");
-//    delay(1000);
-//  }
-//  Serial.print(currentPath.left);
-//  Serial.print(currentPath.front);
-//  Serial.println(currentPath.right);
+    qtrPath ret { 
+        .leftPath = qtrIsBlack(sensorValues[0]),
+        .centerPath = qtrIsBlack(sensorValues[SENSOR_COUNT / 2 - 1])
+            || qtrIsBlack(sensorValues[SENSOR_COUNT / 2]),
+        .rightPath = qtrIsBlack(sensorValues[SENSOR_COUNT - 1])
+    };
 
-//  if (currentPath != previousPath) {
-//    debounceCnt = 1;
-//  } else {
-//    debounceCnt += 1;
-//  }
-  if (currentPath != previousPath) {
-    debounceTime = millis();
-  }
-
-//  if (debounceCnt >= DEBOUNCE_CNT_TARGET) {
-//    result = currentPath;
-//  }
-  if (millis() - debounceTime > DEBOUNCE_TIME_TARGET) {
-    result = currentPath;
-  }
-  previousPath = currentPath;
-  
-  return result;
+    return ret;
 }
 
 #endif

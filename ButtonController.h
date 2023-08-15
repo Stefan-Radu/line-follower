@@ -1,20 +1,23 @@
 #ifndef BUTTON_CONTROLLER_H
 #define BUTTON_CONTROLLER_H
 
+#define BUTTON_PIN 3
 #define DEBOUNCE_DURATION 50
+
+// TODO write documentation
 
 struct Button {
   uint8_t pin;
   bool state;
-};
+} button;
 
-bool buttonInit(Button &b, const uint8_t buttonPin) {
+inline bool buttonInit(Button &b, const uint8_t buttonPin) {
   pinMode(buttonPin, INPUT_PULLUP);
-  b = {buttonPin, 1, // pullup so not pressed is 1
-  };
+  b = { buttonPin,
+        1, /* pullup so not pressed is 1 */ };
 }
 
-void buttonUpdateState(Button &b) {
+inline void buttonUpdateState(Button &b) {
   static uint8_t lastReading = 1; // not pressed is 1
   static uint32_t lastDebounceTime = 0;
   
@@ -32,7 +35,7 @@ void buttonUpdateState(Button &b) {
   lastReading = newReading;
 }
 
-bool buttonDetectPress(Button &b) {
+inline bool buttonDetectPress(Button &b) {
   bool lastState = b.state;
   buttonUpdateState(b); // do this so state gets updated no matter the outcome
 
