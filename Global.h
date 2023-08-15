@@ -36,8 +36,8 @@ double doubleMap(double x, double in_min, double in_max, double out_min, double 
 
 //#define MAX_MOTOR_SPEED 255
 // TODO separate speeds for maze and line follow
-#define MAX_MOTOR_SPEED 215
-#define TURN_MOTOR_SPEED 240
+#define MAX_MOTOR_SPEED 160
+#define TURN_MOTOR_SPEED 160
 
 #define TIME_ONE_WHITE_TO_STOP 1000 // millis //TODO typo
 

@@ -33,10 +33,10 @@ Button button;
 bool isTurning = false;
 bool actionLock = false;
 
-#define TURN_OVERSHOOT_DURATION 75
+#define TURN_OVERSHOOT_DURATION 25
 //#define U_TURN_OVERSHOOT_DURATION 150
-#define BACK_ON_TRACK_DURATION 800
-#define SKIP_INTERSECTION_DURATION 150
+#define BACK_ON_TRACK_DURATION 400
+#define SKIP_INTERSECTION_DURATION 50
 
 void driveInit() {
   motorInit(leftMotor);

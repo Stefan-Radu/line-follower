@@ -14,7 +14,7 @@
 
 QTRSensors qtr;
 
-const uint8_t sensorCount = 6;
+const uint8_t sensorCount = 8;
 uint16_t sensorValues[sensorCount];
 
 // for 3 readings
@@ -83,7 +83,7 @@ struct qtrBlackSensorCount {
 void qtrInit() {
   // configure the sensors
   qtr.setTypeAnalog();
-  qtr.setSensorPins((const uint8_t[]){A0, A1, A2, A3, A4, A5}, sensorCount);
+  qtr.setSensorPins((const uint8_t[]){A7, A6, A5, A4, A3, A2, A1, A0}, sensorCount);
 
   smoothSensorInfo = {
     .readings = 0,
